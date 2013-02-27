@@ -36,6 +36,7 @@ import qualified Data.ByteString.Char8 as S
 import Debug.Trace
 import System.IO.Streams (InputStream, OutputStream)
 import qualified System.IO.Streams as Streams
+import qualified System.IO.Streams.ByteString (TooFewBytesWrittenException)
 
 --
 -- what we're actually testing
@@ -75,6 +76,9 @@ suite = do
 
     describe "Expectation handling" $ do
         testExpectationContinue
+
+    describe "Request handling" $ do
+        testFixedSizeRequestBody
 
     describe "Convenience API" $ do
         testPutChunks
@@ -302,7 +306,7 @@ testPutChunks =
     it "PUT correctly chunks known size entity body" $ do
         let url = S.concat ["http://", localhost, "/size"]
 
-        put url "text/plain" body handler
+        put url "text/plain" body (ensureFixedSizeHandler 33000)
       where
         body :: OutputStream ByteString -> IO ()
         body o = do
@@ -310,35 +314,13 @@ testPutChunks =
             let x' = Builder.toByteString x
             Streams.write (Just x') o
 
-        handler :: Response -> InputStream ByteString -> IO ()
-        handler _ i = do
-            (Just b') <- Streams.read i
-
-            end <- Streams.atEOF i
-            assertBool "Expected end of stream" end
-
-            let size = readDecimal b' :: Int
-            assertEqual "Should have replied with correct file size" 33000 size
 
 
 testPostChunks =
     it "POST correctly chunks a fileBody" $ do
         let url = S.concat ["http://", localhost, "/size"]
 
-        post url "image/jpeg" (fileBody "tests/statler.jpg") handler
-      where
-        handler :: Response -> InputStream ByteString -> IO ()
-        handler p i = do
-            let code = getStatusCode p
-            assertEqual "Expected 200 OK" 200 code
-
-            (Just b') <- Streams.read i
-
-            end <- Streams.atEOF i
-            assertBool "Expected end of stream" end
-
-            let size = readDecimal b' :: Int
-            assertEqual "Should have replied with correct file size" 4611 size
+        post url "image/jpeg" (fileBody "tests/statler.jpg") (ensureFixedSizeHandler 4611)
 
 
 testPostWithForm =
@@ -424,3 +406,31 @@ testEstablishConnection =
         let len = S.length x'
         assertEqual "Incorrect number of bytes read" 4611 len
 
+
+testFixedSizeRequestBody = do
+    it "fixed size request body is enforced" $ do
+        let url = S.concat ["http://", localhost, "/static/statler.jpg"]
+
+        withConnection (establishConnection url) $ (\c -> do
+            q <- buildRequest c $ do
+                http PUT "/size"
+                setContentType "image/jpeg"
+                setContentLength 4611
+
+            sendRequest c q (fileBody "tests/statler.jpg")
+
+            receiveResponse c (ensureFixedSizeHandler 4611)
+            return ())
+
+ensureFixedSizeHandler :: Int -> Response -> InputStream ByteString -> IO ()
+ensureFixedSizeHandler len p i = do
+    let code = getStatusCode p
+    assertEqual "Expected 200 OK" 200 code
+
+    (Just b') <- Streams.read i
+
+    end <- Streams.atEOF i
+    assertBool "Expected end of stream" end
+
+    let size = readDecimal b' :: Int
+    assertEqual "Should have replied with correct file size" len size

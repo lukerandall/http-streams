@@ -292,7 +292,7 @@ sendRequest c q handler = do
 
         (Static n) -> do
             o3 <- Streams.contramap Builder.fromByteString o2
-            o4 <- Streams.giveBytes (fromIntegral n :: Int64) o3
+            o4 <- Streams.giveExactly (fromIntegral n :: Int64) o3
             y  <- handler o4
             return y
 
