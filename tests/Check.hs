@@ -304,10 +304,11 @@ testPutChunks =
 
         put url "text/plain" body handler
       where
-        body :: OutputStream Builder -> IO ()
+        body :: OutputStream ByteString -> IO ()
         body o = do
-            let x = mconcat $ replicate 33000 (Builder.fromChar 'x')
-            Streams.write (Just x) o
+            let x  = mconcat $ replicate 33000 (Builder.fromChar 'x')
+            let x' = Builder.toByteString x
+            Streams.write (Just x') o
 
         handler :: Response -> InputStream ByteString -> IO ()
         handler _ i = do

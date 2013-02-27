@@ -332,7 +332,7 @@ post :: URL
     -- ^ Resource to POST to.
     -> ContentType
     -- ^ MIME type of the request body being sent.
-    -> (OutputStream Builder -> IO α)
+    -> (OutputStream ByteString -> IO α)
     -- ^ Handler function to write content to server.
     -> (Response -> InputStream ByteString -> IO β)
     -- ^ Handler function to receive the response from the server.
@@ -415,11 +415,12 @@ postForm r' nvs handler = do
 -- Request object; the 'postForm' convenience (which uses this
 -- @encodedFormBody@ function) takes care of this for you, obviously.
 --
-encodedFormBody :: [(ByteString,ByteString)] -> OutputStream Builder -> IO ()
+encodedFormBody :: [(ByteString,ByteString)] -> OutputStream ByteString -> IO ()
 encodedFormBody nvs o = do
-    Streams.write (Just b) o
+    Streams.write (Just b') o
   where
-    b = mconcat $ intersperse "&" $ map combine nvs
+    b' = Builder.toByteString b
+    b  = mconcat $ intersperse "&" $ map combine nvs
 
     combine :: (ByteString,ByteString) -> Builder
     combine (n',v') = mconcat [urlEncodeBuilder n', "=", urlEncodeBuilder v']
@@ -439,7 +440,7 @@ put :: URL
     -- ^ Resource to PUT to.
     -> ContentType
     -- ^ MIME type of the request body being sent.
-    -> (OutputStream Builder -> IO α)
+    -> (OutputStream ByteString -> IO α)
     -- ^ Handler function to write content to server.
     -> (Response -> InputStream ByteString -> IO β)
     -- ^ Handler function to receive the response from the server.

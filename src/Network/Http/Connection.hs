@@ -32,12 +32,12 @@ module Network.Http.Connection (
     concatHandler
 ) where
 
-import Blaze.ByteString.Builder (Builder)
 import qualified Blaze.ByteString.Builder as Builder (flush, fromByteString,
                                                       toByteString)
 import qualified Blaze.ByteString.Builder.HTTP as Builder (chunkedTransferEncoding, chunkedTransferTerminator)
 import Control.Exception (bracket)
 import Data.ByteString (ByteString)
+import Data.Int (Int64)
 import qualified Data.ByteString.Char8 as S
 import Data.Monoid (mappend, mempty)
 import Network.Socket
@@ -246,12 +246,7 @@ closeSSL s ssl = do
 -- >     sendRequest c q (\o ->
 -- >         Streams.write (Just "Hello World\n") o)
 --
-{-
-    I would like to enforce the constraints on the Empty and Static
-    cases shown here, but those functions take OutputStream ByteString,
-    and we are of course working in OutputStream Builder by that point.
--}
-sendRequest :: Connection -> Request -> (OutputStream Builder -> IO α) -> IO α
+sendRequest :: Connection -> Request -> (OutputStream ByteString -> IO α) -> IO α
 sendRequest c q handler = do
     o2 <- Streams.builderStream o1
 
@@ -284,18 +279,21 @@ sendRequest c q handler = do
     x <- case e2 of
         Empty -> do
             o3 <- Streams.nullOutput
-            y <- handler o3
+            o4 <- Streams.giveBytes (0 :: Int64) o3
+            y <- handler o4
             return y
 
         Chunking    -> do
             o3 <- Streams.contramap Builder.chunkedTransferEncoding o2
-            y  <- handler o3
+            o4 <- Streams.contramap Builder.fromByteString o3
+            y  <- handler o4
             Streams.write (Just Builder.chunkedTransferTerminator) o2
             return y
 
-        (Static _) -> do
---          o3 <- Streams.giveBytes (fromIntegral n :: Int64) o2
-            y  <- handler o2
+        (Static n) -> do
+            o3 <- Streams.contramap Builder.fromByteString o2
+            o4 <- Streams.giveBytes (fromIntegral n :: Int64) o3
+            y  <- handler o4
             return y
 
 
@@ -363,7 +361,7 @@ receiveResponse c handler = do
 -- | Use this for the common case of the HTTP methods that only send
 -- headers and which have no entity body, i.e. 'GET' requests.
 --
-emptyBody :: OutputStream Builder -> IO ()
+emptyBody :: OutputStream ByteString -> IO ()
 emptyBody _ = return ()
 
 
@@ -379,13 +377,13 @@ emptyBody _ = return ()
 -- you need for the third argument to 'sendRequest', namely
 --
 -- >>> :t filePath "hello.txt"
--- :: OutputStream Builder -> IO ()
+-- :: OutputStream ByteString -> IO ()
 --
 {-
     Relies on Streams.withFileAsInput generating (very) large chunks [which it
     does]. A more efficient way to do this would be interesting.
 -}
-fileBody :: FilePath -> OutputStream Builder -> IO ()
+fileBody :: FilePath -> OutputStream ByteString -> IO ()
 fileBody p o = do
     Streams.withFileAsInput p (\i -> inputStreamBody i o)
 
@@ -401,18 +399,14 @@ fileBody p o = do
 -- >     i <- getStreamFromVault                    -- magic, clearly
 -- >     sendRequest c q (inputStreamBody i)
 --
--- This function maps "Builder.fromByteString" over the input, which will
--- be efficient if the ByteString chunks are large.
---
 {-
     Note that this has to be 'supply' and not 'connect' as we do not
     want the end of stream to prematurely terminate the chunked encoding
     pipeline!
 -}
-inputStreamBody :: InputStream ByteString -> OutputStream Builder -> IO ()
-inputStreamBody i1 o = do
-    i2 <- Streams.map Builder.fromByteString i1
-    Streams.supply i2 o
+inputStreamBody :: InputStream ByteString -> OutputStream ByteString -> IO ()
+inputStreamBody i o = do
+    Streams.supply i o
 
 
 --
